@@ -1,0 +1,8 @@
+beautifulsoup4
+pdfplumber
+python-docx
+chromadb
+google-genai
+streamlit
+python-dotenv
+requests
