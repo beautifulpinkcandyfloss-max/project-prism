@@ -17,12 +17,13 @@ Run: streamlit run app.py
 
 import os
 from collections import defaultdict
+import streamlit as st
+import chromadb
+
 if not os.path.exists("chroma_db"):
     st.info("Building your transcript archive for the first time... please wait a moment.")
     import embed
     # If embed.py has a main function, call it here (e.g., embed.main())
-import chromadb
-import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
