@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+processed_data/
+raw_inputs/
+static_site/
