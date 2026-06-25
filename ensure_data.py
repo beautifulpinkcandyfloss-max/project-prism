@@ -28,7 +28,25 @@ import os
 import urllib.request
 import zipfile
 
-DATA_ZIP_URL = os.environ.get("PRISM_DATA_URL", "")
+
+def _get_data_url() -> str:
+    """Read PRISM_DATA_URL from any of the places it could legitimately
+    live. Streamlit Cloud's documented behavior loads secrets into
+    st.secrets[...], but only mirrors them as environment variables for
+    some secret formats -- to be robust to both, check both sources, and
+    also defer the streamlit import so this module is still usable
+    outside Streamlit (e.g. for local testing)."""
+    url = os.environ.get("PRISM_DATA_URL", "").strip()
+    if url:
+        return url
+    try:
+        import streamlit as st
+        url = st.secrets.get("PRISM_DATA_URL", "").strip()
+    except Exception:
+        url = ""
+    return url
+
+
 MARKER_PATH = "processed_data/chroma_db"
 
 
@@ -37,22 +55,24 @@ def ensure_data():
         print("[ensure_data] processed_data/chroma_db already present -- nothing to do.")
         return
 
-    if not DATA_ZIP_URL:
+    url = _get_data_url()
+    if not url:
         print("[ensure_data] WARNING: processed_data/chroma_db is missing and "
-              "PRISM_DATA_URL is not set. The app will have no content to search. "
-              "Set PRISM_DATA_URL in Streamlit Cloud's Secrets -- see this file's "
-              "docstring for the one-time setup steps.")
+              "PRISM_DATA_URL is not set (checked both env vars and st.secrets). "
+              "The app will have no content to search. See ensure_data.py docstring "
+              "for the one-time setup steps.")
         return
 
-    print(f"[ensure_data] Downloading prebuilt data from {DATA_ZIP_URL} ...")
+    print(f"[ensure_data] Downloading prebuilt data from {url} ...")
     zip_path = "processed_data_download.zip"
     try:
-        urllib.request.urlretrieve(DATA_ZIP_URL, zip_path)
+        urllib.request.urlretrieve(url, zip_path)
         with zipfile.ZipFile(zip_path, "r") as z:
             z.extractall(".")
         print("[ensure_data] Done -- processed_data/ is now populated.")
     except Exception as exc:
         print(f"[ensure_data] FAILED to download/extract data: {type(exc).__name__}: {exc}")
+        raise
     finally:
         if os.path.exists(zip_path):
             os.remove(zip_path)

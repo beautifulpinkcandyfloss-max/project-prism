@@ -721,13 +721,46 @@ def render_learn_page():
 # ---------------------------------------------------------------------
 
 def main():
-    ensure_data()
-
     st.set_page_config(
         page_title="Project Prism — Channeled Transcript Archive",
         page_icon="🔺",
         layout="centered",
     )
+
+    # Visible status during first-boot data download. We surface this in
+    # the UI rather than relying on print() because some hosts
+    # (Streamlit Cloud included) don't reliably show stdout in their app
+    # log -- the user would see only the downstream "no index" error,
+    # with no way to tell why. A visible spinner here makes the actual
+    # state of the download obvious.
+    import os as _os
+    if not _os.path.isdir("processed_data/chroma_db"):
+        from ensure_data import _get_data_url
+        url_present = bool(_get_data_url())
+        if not url_present:
+            st.error(
+                "First-boot setup hasn't completed: the prebuilt data zip URL "
+                "(`PRISM_DATA_URL`) is not configured. Add it under the app's "
+                "**Secrets** settings (see `ensure_data.py` docstring for the "
+                "exact format), then reboot the app."
+            )
+            st.stop()
+        with st.spinner("First-boot setup: downloading prebuilt archive data... "
+                         "(this only happens once per deploy)"):
+            try:
+                ensure_data()
+            except Exception as exc:
+                st.error(f"Data download failed: {type(exc).__name__}: {exc}")
+                st.stop()
+        if not _os.path.isdir("processed_data/chroma_db"):
+            st.error(
+                "Data download completed without raising, but "
+                "`processed_data/chroma_db` still isn't present. The zip may "
+                "be malformed -- check that you zipped the `processed_data` "
+                "folder ITSELF (not its contents) so the archive contains a "
+                "top-level `processed_data/` directory."
+            )
+            st.stop()
     # Best-effort only -- this helps the browser tab title and, for some
     # platforms, link-preview cards when someone shares a URL. It does
     # NOT help Google/AI crawlers: Streamlit serves the same empty SPA
