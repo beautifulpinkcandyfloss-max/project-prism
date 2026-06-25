@@ -747,19 +747,29 @@ def main():
             st.stop()
         with st.spinner("First-boot setup: downloading prebuilt archive data... "
                          "(this only happens once per deploy)"):
+            import io as _io
+            import contextlib as _contextlib
+            log_buffer = _io.StringIO()
             try:
-                ensure_data()
+                with _contextlib.redirect_stdout(log_buffer):
+                    ensure_data()
             except Exception as exc:
-                st.error(f"Data download failed: {type(exc).__name__}: {exc}")
+                from ensure_data import _get_data_url
+                attempted_url = _get_data_url()
+                st.error(
+                    f"Data download failed: {type(exc).__name__}: {exc}\n\n"
+                    f"URL attempted: `{attempted_url}` (length {len(attempted_url)})"
+                )
+                with st.expander("Diagnostic output"):
+                    st.code(log_buffer.getvalue() or "(no output captured)")
                 st.stop()
         if not _os.path.isdir("processed_data/chroma_db"):
             st.error(
                 "Data download completed without raising, but "
-                "`processed_data/chroma_db` still isn't present. The zip may "
-                "be malformed -- check that you zipped the `processed_data` "
-                "folder ITSELF (not its contents) so the archive contains a "
-                "top-level `processed_data/` directory."
+                "`processed_data/chroma_db` still isn't present."
             )
+            with st.expander("Diagnostic output"):
+                st.code(log_buffer.getvalue() or "(no output captured)")
             st.stop()
     # Best-effort only -- this helps the browser tab title and, for some
     # platforms, link-preview cards when someone shares a URL. It does

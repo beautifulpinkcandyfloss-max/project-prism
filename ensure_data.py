@@ -25,8 +25,9 @@ the next deploy/reboot will pick up the fresh copy automatically.
 """
 
 import os
-import urllib.request
 import zipfile
+
+import requests
 
 
 def _get_data_url() -> str:
@@ -63,13 +64,51 @@ def ensure_data():
               "for the one-time setup steps.")
         return
 
-    print(f"[ensure_data] Downloading prebuilt data from {url} ...")
+    print(f"[ensure_data] Fetching URL: |{url}| (length {len(url)})")
+    print(f"[ensure_data] Current working directory: {os.getcwd()}")
+
     zip_path = "processed_data_download.zip"
     try:
-        urllib.request.urlretrieve(url, zip_path)
+        response = requests.get(url, stream=True, timeout=120,
+                                 headers={"User-Agent": "Project-Prism/1.0"},
+                                 allow_redirects=True)
+        response.raise_for_status()
+
+        bytes_written = 0
+        with open(zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    bytes_written += len(chunk)
+
+        actual_size = os.path.getsize(zip_path)
+        print(f"[ensure_data] Downloaded {bytes_written} bytes; file on disk: {actual_size} bytes")
+
+        # Sanity-check the zip before extracting. testzip() returns the
+        # name of the first bad file, or None if everything's OK -- if
+        # the download was truncated mid-stream, this catches it instead
+        # of silently extracting a partial archive.
         with zipfile.ZipFile(zip_path, "r") as z:
+            bad = z.testzip()
+            if bad is not None:
+                raise RuntimeError(f"Zip integrity check failed -- corrupt entry: {bad}")
+            top_level = sorted({name.split('/')[0] for name in z.namelist() if name})
+            print(f"[ensure_data] Zip integrity OK. Top-level entries: {top_level}")
+            print(f"[ensure_data] Extracting to: {os.path.abspath('.')}")
             z.extractall(".")
+
+        # Confirm what actually ended up on disk
+        after = sorted(os.listdir("."))
+        print(f"[ensure_data] Working directory contents after extract: {after}")
+        if os.path.isdir("processed_data"):
+            inside = sorted(os.listdir("processed_data"))
+            print(f"[ensure_data] processed_data/ contents: {inside}")
+
         print("[ensure_data] Done -- processed_data/ is now populated.")
+    except requests.HTTPError as exc:
+        print(f"[ensure_data] HTTP error from GitHub: {exc.response.status_code} "
+              f"-- final URL after any redirects: {exc.response.url}")
+        raise
     except Exception as exc:
         print(f"[ensure_data] FAILED to download/extract data: {type(exc).__name__}: {exc}")
         raise
