@@ -25,7 +25,9 @@ from google import genai
 from google.genai import types
 
 from parsers.base import SOURCE_KEYS
-from theme import inject_theme, page_header, frequency_strip_html, nav_bar, site_footer, ENTITIES, ENTITY_ORDER
+import theme
+from theme import inject_theme, page_header, frequency_strip_html, nav_bar, ENTITIES, ENTITY_ORDER
+site_footer = getattr(theme, "site_footer", lambda: None)
 from debate_engine import run_debate, generate_followup_turn
 from scraper import load_all_sessions
 from linkify import linkify, topics_available
