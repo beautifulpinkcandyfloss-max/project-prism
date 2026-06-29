@@ -283,6 +283,27 @@ def inject_theme():
             color: var(--signal);
         }}
 
+        /* Site-wide disclaimer footer */
+        .prism-footer {{
+            margin-top: 3rem;
+            padding: 1.2rem 0;
+            border-top: 1px solid var(--line);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.78rem;
+            line-height: 1.55;
+            color: var(--muted);
+            text-align: center;
+        }}
+
+        .prism-footer a {{
+            color: var(--accent);
+            text-decoration: none;
+        }}
+
+        .prism-footer a:hover {{
+            text-decoration: underline;
+        }}
+
         /* Internal topic links inline within transcript/answer text */
         a.prism-topic-link {{
             color: var(--accent);
@@ -430,3 +451,20 @@ def frequency_strip(active_key: str = None):
     """Standalone render -- use when the strip doesn't need to live
     inside a larger accumulating placeholder."""
     st.markdown(frequency_strip_html(active_key), unsafe_allow_html=True)
+
+
+SITE_FOOTER_HTML = """
+<div class="prism-footer">
+  Project Prism is a non-commercial, not-for-profit open-source educational
+  research tool built for study and synthesis. All source materials belong
+  entirely to L/L Research and their respective copyright holders. Please
+  support the original archives at
+  <a href="https://www.llresearch.org" target="_blank" rel="noopener">llresearch.org</a>.
+</div>
+"""
+
+
+def site_footer():
+    """Renders the standard site-wide disclaimer footer. Call once at
+    the end of every page's render function."""
+    st.markdown(SITE_FOOTER_HTML, unsafe_allow_html=True)

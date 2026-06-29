@@ -96,29 +96,189 @@ CANDIDATE_RE = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b')
 # If the FIRST word of a candidate phrase is in this set, the whole
 # candidate is rejected -- a genuine proper noun phrase practically never
 # starts with a function word like these.
+# Comprehensive English stopword list -- sourced from the widely-used
+# NLTK English stopwords corpus, plus a handful of channeled-text
+# specifics that the corpus doesn't catch ("indeed", "thus", "hence",
+# "moreover", "perhaps" -- the kind of formal sentence-initial
+# connectors that show up constantly in this kind of material).
+#
+# Baked in as a literal Python set rather than downloaded at runtime so
+# this module stays self-contained and doesn't depend on a network call
+# every time the index gets rebuilt.
 COMMON_WORD_BLOCKLIST = {
-    "this", "that", "these", "those", "there", "here",
-    "and", "but", "or", "nor", "so", "yet", "if", "when", "while",
-    "although", "though", "because", "since", "unless", "until", "after",
-    "before", "once", "whenever", "wherever", "what", "where", "why",
-    "how", "who", "whom", "whose", "which", "some", "many", "most",
-    "each", "every", "such", "just", "only", "also", "even", "then",
-    "than", "now", "very", "more", "less", "much", "all", "any", "no",
-    "not", "do", "does", "did", "is", "are", "was", "were", "be", "been",
-    "being", "have", "has", "had", "i", "we", "you", "he", "she", "it",
-    "they", "yes", "thank", "thanks", "indeed", "however", "therefore",
-    "thus", "hence", "moreover", "furthermore", "nevertheless", "still",
-    "instead", "perhaps", "maybe", "certainly", "clearly", "obviously",
-    "would", "will", "should", "could", "can", "may", "might", "must",
-    "let", "please", "well", "okay", "alright", "again", "first",
-    "second", "third", "finally", "next", "last", "today", "tomorrow",
-    "yesterday", "right", "true", "false", "ok",
+    # --- NLTK English stopwords (the standard ~180-word list) ---
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you",
+    "you're", "you've", "you'll", "you'd", "your", "yours", "yourself",
+    "yourselves", "he", "him", "his", "himself", "she", "she's", "her",
+    "hers", "herself", "it", "it's", "its", "itself", "they", "them",
+    "their", "theirs", "themselves", "what", "which", "who", "whom",
+    "this", "that", "that'll", "these", "those", "am", "is", "are",
+    "was", "were", "be", "been", "being", "have", "has", "had", "having",
+    "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if",
+    "or", "because", "as", "until", "while", "of", "at", "by", "for",
+    "with", "about", "against", "between", "into", "through", "during",
+    "before", "after", "above", "below", "to", "from", "up", "down",
+    "in", "out", "on", "off", "over", "under", "again", "further",
+    "then", "once", "here", "there", "when", "where", "why", "how",
+    "all", "any", "both", "each", "few", "more", "most", "other", "some",
+    "such", "no", "nor", "not", "only", "own", "same", "so", "than",
+    "too", "very", "can", "will", "just", "don", "don't", "should",
+    "should've", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain",
+    "aren", "aren't", "couldn", "couldn't", "didn", "didn't", "doesn",
+    "doesn't", "hadn", "hadn't", "hasn", "hasn't", "haven", "haven't",
+    "isn", "isn't", "ma", "mightn", "mightn't", "mustn", "mustn't",
+    "needn", "needn't", "shan", "shan't", "shouldn", "shouldn't", "wasn",
+    "wasn't", "weren", "weren't", "won", "won't", "wouldn", "wouldn't",
+
+    # --- Channeled-text additions: formal/archaic connectors and very
+    # common short responses that recur constantly in this kind of
+    # transcript but aren't in the standard NLTK list ---
+    "indeed", "thus", "hence", "moreover", "furthermore", "nevertheless",
+    "however", "therefore", "perhaps", "maybe", "certainly", "clearly",
+    "obviously", "absolute", "absolutely", "instead", "still", "yet",
+    "yes", "okay", "alright", "ok", "thank", "thanks", "please", "well",
+    "let", "go", "going", "gone", "come", "coming", "came", "say", "said",
+    "says", "saying", "see", "saw", "seen", "seeing", "know", "knew",
+    "known", "knowing", "think", "thought", "thinking", "feel", "felt",
+    "feeling", "want", "wanted", "wanting", "give", "gave", "given",
+    "giving", "take", "took", "taken", "taking", "make", "made", "making",
+    "find", "found", "finding", "tell", "told", "telling", "ask", "asked",
+    "asking", "true", "false", "right", "wrong", "first", "second",
+    "third", "fourth", "fifth", "last", "next", "today", "tomorrow",
+    "yesterday", "thing", "things", "way", "ways", "time", "times",
+    "good", "great", "many", "much", "great", "small", "large", "big",
+    "little", "new", "old", "young", "long", "short", "high", "low",
+    "every", "everything", "everyone", "something", "someone", "anything",
+    "anyone", "nothing", "whatever", "whoever", "whenever", "wherever",
+
+    # --- Words specifically reported as still leaking through ---
+    "according", "could", "should", "would", "without", "through",
+    "throughout", "within", "whose", "allow", "allowed", "allowing",
+    "work", "works", "worked", "working", "self", "part", "parts",
+    "across", "around", "among", "amongst", "behind", "beyond", "beside",
+    "besides", "above", "below", "during", "despite", "regarding",
+    "concerning", "via", "vs", "etc", "i.e", "e.g",
+
+    # --- Months and weekdays. These are technically proper nouns and
+    # pass every noun-shape test, but they're never useful as topic
+    # pages -- linking every mention of "Monday" or "December" is just
+    # noise. ---
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday",
+
+    # --- Discourse markers and sentence-initial connectors that get
+    # capitalized because of grammar, not because they're nouns.
+    # Surfaced by inspecting a real generated topic_aliases.json: the
+    # blocklist, the noun-shape heuristic, AND the mid-sentence check
+    # all let these through because they often DO appear capitalized
+    # mid-sentence inside quoted dialogue. Belt-and-suspenders: just
+    # blocklist them by name. ---
+    "yeah", "note", "imagine", "look", "remember", "speaking", "moving",
+    "consider", "simply", "actually", "usually", "finally",
+    "consequently", "rather", "even", "also", "another", "though",
+    "although", "sometimes", "listen", "free", "back",
+    "introduction", "session", "chapter", "book",
+    # More discourse markers / generic nouns surfaced in the same review
+    "since", "others", "three", "four", "form", "rest", "question",
+    "mark", "biblical", "intelligent", "children",
 }
 
 
+# --- Heuristic noun/proper-noun detection (Option C from the design
+# discussion). The blocklist alone can't keep up at scale: ordinary
+# English has too many adverbs, modal verbs, and common verbs to
+# enumerate exhaustively. These rules instead look at the SHAPE of a
+# word -- its suffixes and a small set of recognizable function-word
+# patterns -- to ask "is this even plausibly a noun?" before considering
+# it as a topic candidate. ---
+
+# Words that end this way are very rarely nouns: adverbs ("absolutely",
+# "clearly"), present participles when standalone ("according",
+# "allowing"), past tense or past participles ("allowed", "tested"),
+# comparatives/superlatives ("greater", "greatest"). Some real nouns DO
+# end this way (e.g. "ending", "meeting", "building") -- those are
+# rescued by NOUN_SUFFIX_ALLOWLIST below, where we list known nouny
+# exceptions for the most likely-collision endings.
+NOUN_LIKELY_NEGATIVE_SUFFIXES = (
+    "ly",      # adverbs: clearly, obviously, absolutely
+    "ward",    # adverbs: forward, backward, toward
+    "wise",    # adverbs: likewise, otherwise
+)
+
+# Suffixes that often indicate verbs but can also be real nouns -- we
+# block them by default UNLESS the word's also in NOUN_SUFFIX_ALLOWLIST.
+NOUN_AMBIGUOUS_SUFFIXES = ("ing", "ed", "er", "est")
+
+# Common words that LOOK verb-y or adverb-y by suffix but are actually
+# nouns we want to preserve. Extend this if you see false rejections.
+NOUN_SUFFIX_ALLOWLIST = {
+    "being", "beings", "meeting", "meetings", "ending", "endings",
+    "building", "buildings", "feeling", "feelings", "teaching",
+    "teachings", "learning", "understanding", "reading", "writing",
+    "channeling", "transmission",
+    "creator", "ancestor", "elder", "elders", "father", "mother",
+    "brother", "sister", "leader", "leaders", "teacher", "teachers",
+    "messenger", "messengers", "water", "matter", "letter", "member",
+    "members", "manner", "number", "answer", "wonder", "border",
+    "center", "corner", "power", "powers", "tower", "towers",
+    "flower", "flowers",
+    # Additional -er/-ter ending real nouns surfaced when reviewing
+    # the alias map: planet names, religious/abstract nouns, ordinary
+    # nouns that ARE nouns despite the suffix shape.
+    "jupiter", "mercury", "saturn", "venus",
+    "master", "masters", "prayer", "prayers",
+    "wanderer", "wanderers", "speaker", "speakers", "listener",
+    "listeners", "believer", "believers", "follower", "followers",
+    "monster", "monsters", "stranger", "strangers", "soldier",
+    "soldiers", "warrior", "warriors", "carpenter", "carpenters",
+    "chamber", "chambers", "river", "rivers", "summer", "winter",
+    "weather", "feather", "leather",
+}
+
+
+def _looks_like_noun(word: str) -> bool:
+    """Best-effort heuristic answer to 'is this word plausibly a noun?'
+    Rejects words whose shape strongly suggests another part of speech
+    (adverbs ending in -ly, present participles ending in -ing without
+    being on the allowlist, etc.). Not perfect -- a real POS tagger
+    would do better -- but cheap, dependency-free, and catches the
+    long tail of garbage that no reasonable blocklist would cover."""
+    lower = word.lower()
+
+    if lower in NOUN_SUFFIX_ALLOWLIST:
+        return True
+
+    for suffix in NOUN_LIKELY_NEGATIVE_SUFFIXES:
+        if lower.endswith(suffix) and len(lower) > len(suffix) + 1:
+            return False
+
+    for suffix in NOUN_AMBIGUOUS_SUFFIXES:
+        if lower.endswith(suffix) and len(lower) > len(suffix) + 1:
+            return False
+
+    return True
+
+
 def _is_likely_real_topic(phrase: str) -> bool:
-    first_word = phrase.split()[0].lower()
-    return first_word not in COMMON_WORD_BLOCKLIST
+    """A phrase qualifies as a real topic candidate only if:
+      (a) NONE of its words is a stopword, AND
+      (b) every word in it plausibly looks like a noun.
+
+    The blocklist catches the high-frequency closed-class garbage
+    (modals, pronouns, conjunctions); the noun-shape heuristic catches
+    the open-class long tail (adverbs, verbs, participles) that no
+    finite blocklist can keep up with at corpus scale."""
+    words = phrase.split()
+    if not words:
+        return False
+    for w in words:
+        if w.lower() in COMMON_WORD_BLOCKLIST:
+            return False
+        if not _looks_like_noun(w):
+            return False
+    return True
 
 
 def _is_mid_sentence(text: str, match_start: int) -> bool:

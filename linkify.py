@@ -10,16 +10,20 @@ import os
 import re
 import urllib.parse
 
+from topics import COMMON_WORD_BLOCKLIST, CURATED_TOPICS
+
 ALIASES_PATH = "processed_data/topic_aliases.json"
 
 _alias_map = None
 _pattern = None
+_curated_canonicals = None
 
 
 def _load():
-    global _alias_map, _pattern
+    global _alias_map, _pattern, _curated_canonicals
     if _alias_map is not None:
         return
+    _curated_canonicals = {c.lower() for c in CURATED_TOPICS}
     if not os.path.exists(ALIASES_PATH):
         _alias_map = {}
         _pattern = None
@@ -59,6 +63,22 @@ def linkify(text: str, max_links_per_topic: int = 1) -> str:
         canonical = _alias_map.get(alias)
         if not canonical or canonical in seen_canonicals:
             return match.group(0)
+        # Display-time stopword guard: even if a bad alias ended up in
+        # the alias map (e.g. a stale topic_aliases.json from before the
+        # blocklist was tightened, or an auto-detected term that
+        # shouldn't have qualified), don't actually wrap it as a link if
+        # any word is a stopword. Belt-and-suspenders -- the topics.py
+        # filter runs at INDEX time, this runs at DISPLAY time.
+        # IMPORTANT: only apply this guard to AUTOMATIC topics, not
+        # curated ones. Curated entries are explicit human choices and
+        # may legitimately contain short stopwords ("Free Will", "All
+        # That Is", "Service to Others", "Law of One") -- the curated
+        # list is the authoritative override.
+        if canonical.lower() not in _curated_canonicals:
+            canonical_words = canonical.lower().split()
+            alias_words = alias.split()
+            if any(w in COMMON_WORD_BLOCKLIST for w in canonical_words + alias_words):
+                return match.group(0)
         seen_canonicals.add(canonical)
         encoded = urllib.parse.quote(canonical)
         return (f'<a href="?view=topic&name={encoded}" target="_self" class="prism-topic-link">'

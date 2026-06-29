@@ -4,3 +4,5 @@ __pycache__/
 processed_data/
 raw_inputs/
 static_site/
+
+processed_data.zip

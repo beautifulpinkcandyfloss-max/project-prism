@@ -25,11 +25,13 @@ from google import genai
 from google.genai import types
 
 from parsers.base import SOURCE_KEYS
-from theme import inject_theme, page_header, frequency_strip_html, nav_bar, ENTITIES, ENTITY_ORDER
+from theme import inject_theme, page_header, frequency_strip_html, nav_bar, site_footer, ENTITIES, ENTITY_ORDER
 from debate_engine import run_debate, generate_followup_turn
 from scraper import load_all_sessions
 from linkify import linkify, topics_available
 from rate_limit import check_rate_limit
+from share_store import save_share, load_share
+from typing import Optional
 from ensure_data import ensure_data
 from utils import soften_all_caps, humanize_redactions
 from learn_content import (
@@ -190,42 +192,123 @@ def generate_answer(client, question: str, context_block: str) -> str:
 # Page: Ask
 # ---------------------------------------------------------------------
 
-def render_ask_page(client, collection):
-    page_header(
-        "Project Prism / Archive Query",
-        "🔺 Ask the Archive",
-        "One question, five channeled sources. See where they agree, and where they don't.",
-    )
+def _render_share_button(share_id: str, position: str):
+    """Renders a real working 'Share this question' button.
 
-    question = st.text_input("Ask a question:", placeholder="How were the pyramids built?",
-                              label_visibility="collapsed")
-    ask_clicked = st.button("Ask", type="primary")
+    Real-world subtlety this needs to handle: st.markdown(..., unsafe_allow_html=True)
+    renders HTML but sandboxes/strips onclick handlers and inline <script>,
+    so a plain markdown approach makes the button visible but inert (the
+    earlier version of this had exactly that bug). st.components.v1.html
+    renders inside an iframe specifically designed to allow JS to run --
+    that's the version we want.
 
-    if not ask_clicked:
-        return
-    if not question.strip():
-        st.warning("Type a question first.")
-        return
+    The trade-off is that an iframe is a separate browsing context, so:
+      1. height must be specified explicitly (iframes can't auto-grow)
+      2. navigator.clipboard.writeText() works in modern browsers from
+         inside an iframe as long as the click came from the user; we
+         keep a deprecated-but-universal textarea+execCommand fallback
+         for older browsers where the modern API isn't available.
 
-    allowed, limit_message = check_rate_limit(
-        "asking questions", ASK_PER_CLIENT_MAX, ASK_WINDOW, GLOBAL_MAX, GLOBAL_WINDOW,
-    )
-    if not allowed:
-        st.error(limit_message)
-        return
+    Each button needs a unique id (top vs bottom of the same answer) so
+    the 'Copied!' flash on one doesn't trigger on the other."""
+    import streamlit.components.v1 as components
 
-    with st.spinner("Searching across all five sources..."):
-        results = retrieve_context(client, collection, question)
+    try:
+        base_url = st.context.url or ""
+    except Exception:
+        base_url = ""
+    base_url = base_url.split("?")[0].rstrip("/")
+    full_url = f"{base_url}/?ask={share_id}" if base_url else f"?ask={share_id}"
 
-    if not results:
-        st.warning("No indexed content found. Run `python scraper.py` and `python embed.py` first.")
-        return
+    elem_id = f"prism-share-{position}-{share_id}"
+    safe_url = full_url.replace("\\", "\\\\").replace("'", "\\'")
 
-    with st.spinner("Synthesizing answer..."):
-        answer = generate_answer(client, question, build_context_block(results))
+    html = f"""
+    <style>
+      body {{ margin: 0; background: transparent; font-family: 'IBM Plex Mono', monospace; }}
+      .prism-share-row {{
+          display: flex; justify-content: flex-end; padding: 0;
+      }}
+      .prism-share-btn {{
+          background: transparent;
+          color: #D6A24B;
+          border: 1px solid #D6A24B;
+          border-radius: 4px;
+          padding: 0.35rem 0.9rem;
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 0.78rem;
+          letter-spacing: 0.04em;
+          cursor: pointer;
+          transition: background 0.15s ease, color 0.15s ease;
+      }}
+      .prism-share-btn:hover {{ background: #D6A24B; color: #0B0D12; }}
+      .prism-share-btn.copied {{
+          background: #D6A24B; color: #0B0D12 !important;
+      }}
+    </style>
+    <div class="prism-share-row">
+      <button id="{elem_id}" class="prism-share-btn">&#9096; Share this question</button>
+    </div>
+    <script>
+      (function() {{
+        const btn = document.getElementById('{elem_id}');
+        const url = '{safe_url}';
+        btn.addEventListener('click', function() {{
+          const flashCopied = function() {{
+            const original = btn.innerHTML;
+            btn.innerHTML = '\u2713 Copied!';
+            btn.classList.add('copied');
+            setTimeout(function() {{
+              btn.innerHTML = original;
+              btn.classList.remove('copied');
+            }}, 1800);
+          }};
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {{
+            navigator.clipboard.writeText(url).then(flashCopied, function() {{
+              // Modern API rejected (rare; usually a permissions/policy
+              // issue) -- fall through to the legacy method.
+              legacyCopy();
+            }});
+          }} else {{
+            legacyCopy();
+          }}
+
+          function legacyCopy() {{
+            const ta = document.createElement('textarea');
+            ta.value = url;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try {{ document.execCommand('copy'); flashCopied(); }}
+            catch (e) {{ btn.innerHTML = 'Copy failed'; }}
+            document.body.removeChild(ta);
+          }}
+        }});
+      }})();
+    </script>
+    """
+    components.html(html, height=48)
+
+
+def _render_ask_answer(question: str, answer: str, results: list, share_id: Optional[str] = None):
+    """Renders the answer card + source-chunk expanders. Extracted from
+    render_ask_page() so the same UI is used for live asks AND shared
+    replays -- which keeps the two paths visually identical and removes
+    the temptation to let them drift apart."""
+    st.markdown(f"#### Question")
+    st.markdown(f"_{question}_")
+
+    if share_id:
+        _render_share_button(share_id, "top")
 
     st.markdown("#### Answer")
     st.markdown(linkify(answer), unsafe_allow_html=True)
+
+    if share_id:
+        _render_share_button(share_id, "bottom")
+
     st.markdown('<hr class="prism-hr">', unsafe_allow_html=True)
     st.markdown(f"#### Sources &nbsp;<span style='color:var(--muted); font-size:0.8rem;'>"
                 f"({len(results)} passages retrieved)</span>", unsafe_allow_html=True)
@@ -263,6 +346,67 @@ def render_ask_page(client, collection):
                 </div>
                 """
                 st.markdown(_flatten_html(card_html), unsafe_allow_html=True)
+
+
+def render_ask_page(client, collection):
+    page_header(
+        "Project Prism / Archive Query",
+        "🔺 Ask the Archive",
+        "One question, five channeled sources. See where they agree, and where they don't.",
+    )
+
+    # If the URL contains ?ask=<hash>, replay that saved share instead
+    # of asking for a new question. No LLM call, no rate-limit hit --
+    # we already have the answer on disk and just re-render it.
+    params = st.query_params
+    share_id = params.get("ask")
+    if share_id:
+        share = load_share(share_id)
+        if share is None:
+            st.error(
+                "This shared answer is no longer available. Shares are stored on "
+                "Streamlit Cloud's ephemeral filesystem and get wiped on every "
+                "deploy or container restart (typically every few hours to days). "
+                "Ask the question again to generate a fresh share link."
+            )
+            return
+        _render_ask_answer(
+            question=share["question"],
+            answer=share["answer"],
+            results=share["source_chunks"],
+            share_id=share["id"],
+        )
+        return
+
+    question = st.text_input("Ask a question:", placeholder="How were the pyramids built?",
+                              label_visibility="collapsed")
+    ask_clicked = st.button("Ask", type="primary")
+
+    if not ask_clicked:
+        return
+    if not question.strip():
+        st.warning("Type a question first.")
+        return
+
+    allowed, limit_message = check_rate_limit(
+        "asking questions", ASK_PER_CLIENT_MAX, ASK_WINDOW, GLOBAL_MAX, GLOBAL_WINDOW,
+    )
+    if not allowed:
+        st.error(limit_message)
+        return
+
+    with st.spinner("Searching across all five sources..."):
+        results = retrieve_context(client, collection, question)
+
+    if not results:
+        st.warning("No indexed content found. Run `python scraper.py` and `python embed.py` first.")
+        return
+
+    with st.spinner("Synthesizing answer..."):
+        answer = generate_answer(client, question, build_context_block(results))
+
+    new_share_id = save_share(question, answer, results)
+    _render_ask_answer(question=question, answer=answer, results=results, share_id=new_share_id)
 
 
 # ---------------------------------------------------------------------
@@ -805,6 +949,10 @@ def main():
         client = get_genai_client()
         collection = get_collection()
         render_ask_page(client, collection)
+
+    # One footer call at the router level, so every view gets it without
+    # each render_*_page() function having to remember to call it itself.
+    site_footer()
 
 
 if __name__ == "__main__":
